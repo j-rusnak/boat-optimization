@@ -1,26 +1,26 @@
 {
-  "version_id": "20260409_121016_429406",
-  "timestamp": "2026-04-09T12:10:16",
-  "source": "test-optimize",
-  "objective_value": 500000.0,
-  "notes": "test run iterations=1 evals=78",
+  "version_id": "20260409_121930_728509",
+  "timestamp": "2026-04-09T12:19:30",
+  "source": "optimize",
+  "objective_value": -555.9241274075158,
+  "notes": "iterations=60, evaluations=8708, success=False, message=Maximum number of iterations has been exceeded.",
   "params": {
-    "length": 0.16160715730195355,
-    "beam": 0.11223974363258685,
-    "depth": 0.08142296344397158,
-    "flare_exp": 1.4567823998466554,
-    "taper_exp": 2.636352842464567,
-    "ballast_mass": 0.8998924005569006,
-    "ballast_z": 0.010287192300948055,
+    "length": 0.2788381699724336,
+    "beam": 0.06000925682818742,
+    "depth": 0.09731894063422929,
+    "flare_exp": 4.800401634658331,
+    "taper_exp": 4.932844511564273,
+    "ballast_mass": 0.7523987190326887,
+    "ballast_z": 0.005268172043811262,
     "ballast_x": 0.0,
     "mast_x": 0.0
   },
   "metrics": {
-    "avs_deg": 0.0,
-    "meets_avs_requirement": false,
-    "peak_righting_moment_nm": 0.0,
-    "center_of_mass_z_m": 0.03507467177811795,
-    "upright_waterline_z_m": 0.08142296344397157,
-    "freeboard_m": 1.3877787807814457e-17
+    "avs_deg": 180.0,
+    "meets_avs_requirement": true,
+    "peak_righting_moment_nm": 0.1784266854327787,
+    "center_of_mass_z_m": 0.036544011847665356,
+    "upright_waterline_z_m": 0.0908547723297339,
+    "freeboard_m": 0.0064641683044953935
   }
 }

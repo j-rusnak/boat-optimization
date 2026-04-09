@@ -96,8 +96,8 @@ def objective(x: np.ndarray) -> float:
     # Stability (use coarser grid for speed during optimisation)
     stab = compute_stability_curve(
         params,
-        heel_angles_deg=np.arange(0, 181, 10, dtype=float),
-        n_x=25, n_poly=40,
+        heel_angles_deg=np.arange(0, 181, 15, dtype=float),
+        n_x=15, n_poly=25,
     )
 
     # AVS penalty / reward
@@ -140,7 +140,8 @@ def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
         popsize=popsize,
         tol=1e-5,
         disp=verbose,
-        workers=1,
+        workers=-1,
+        updating='deferred',
     )
 
     best = vector_to_params(result.x)

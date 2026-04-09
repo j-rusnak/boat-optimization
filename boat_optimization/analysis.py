@@ -92,28 +92,32 @@ def center_of_mass_body(params: HullParams) -> np.ndarray:
 
 
 def find_waterline_upright(params: HullParams, n_x: int = 200) -> float:
-    """Equilibrium waterline height z (upright, body frame) via binary search."""
+    """Equilibrium waterline height z (upright, body frame) via binary search.
+
+    Uses a fully vectorised analytical formula (no polygon clipping) so
+    this is very fast.
+    """
     m_total = total_mass(params)
     target_vol = m_total / config.WATER_DENSITY_KG_M3
 
     x = np.linspace(-params.length / 2, params.length / 2, n_x)
-    beams_arr = beam_at_x(x, params)
+    beams_arr = beam_at_x(x, params)          # (n_x,)
+    n = params.flare_exp
+    full_areas = beams_arr * params.depth * n / (n + 1.0)  # fully-submerged areas
+    inv_n = 1.0 / n
+    coeff = beams_arr * params.flare_exp / (params.flare_exp + 1.0) / (params.depth ** inv_n)
 
-    def submerged_vol(h):
-        areas = np.zeros(len(x))
-        for i, b in enumerate(beams_arr):
-            if b < 1e-12 or h <= 0:
-                continue
-            if h >= params.depth:
-                areas[i] = cross_section_area(b, params)
-            else:
-                ratio = h / params.depth
-                y_max = (b / 2.0) * ratio ** (1.0 / params.flare_exp)
-                areas[i] = 2.0 * y_max * h * params.flare_exp / (params.flare_exp + 1.0)
-            return float(np.trapezoid(areas, x))
+    def submerged_vol(h: float) -> float:
+        if h <= 0:
+            return 0.0
+        if h >= params.depth:
+            return float(np.trapezoid(full_areas, x))
+        # area_i = 2 * y_max_i * h * n/(n+1)  with  y_max_i = (b_i/2)(h/D)^(1/n)
+        areas = coeff * h ** (1.0 + inv_n)
+        return float(np.trapezoid(areas, x))
 
     z_lo, z_hi = 0.0, params.depth
-    for _ in range(60):
+    for _ in range(40):
         z_mid = (z_lo + z_hi) / 2.0
         if submerged_vol(z_mid) < target_vol:
             z_lo = z_mid
@@ -224,7 +228,7 @@ def _analyze_at_heel(
 
     # Binary search for equilibrium waterline
     z_lo, z_hi = z_all_min, z_all_max
-    for _ in range(50):
+    for _ in range(30):
         h = (z_lo + z_hi) / 2.0
         vol = _total_submerged_volume(rot_polys, dx, h)
         if vol < target_vol:
@@ -342,17 +346,112 @@ def _polygon_area_and_centroid(poly):
 # Volume / COB integration over x-stations
 # ===================================================================
 
+def _clip_area_fast(poly, z_max):
+    """Compute the area of a polygon clipped below z=z_max without allocating
+    a full clipped-polygon array.  Inlines Sutherland-Hodgman + shoelace."""
+    n = len(poly)
+    if n < 3:
+        return 0.0
+
+    # Sutherland-Hodgman clipping, building output list
+    out_y = []
+    out_z = []
+    py, pz = poly[:, 0], poly[:, 1]
+    for i in range(n):
+        cy, cz = py[i], pz[i]
+        ny, nz = py[(i + 1) % n], pz[(i + 1) % n]
+        c_in = cz <= z_max
+        n_in = nz <= z_max
+        if c_in:
+            if n_in:
+                out_y.append(ny); out_z.append(nz)
+            else:
+                dz = nz - cz
+                t = (z_max - cz) / dz if abs(dz) > 1e-15 else 0.5
+                t = max(0.0, min(1.0, t))
+                out_y.append(cy + t * (ny - cy))
+                out_z.append(cz + t * (nz - cz))
+        elif n_in:
+            dz = nz - cz
+            t = (z_max - cz) / dz if abs(dz) > 1e-15 else 0.5
+            t = max(0.0, min(1.0, t))
+            out_y.append(cy + t * (ny - cy))
+            out_z.append(cz + t * (nz - cz))
+            out_y.append(ny); out_z.append(nz)
+
+    m = len(out_y)
+    if m < 3:
+        return 0.0
+
+    # Shoelace area (absolute value)
+    area2 = 0.0
+    for i in range(m):
+        j = (i + 1) % m
+        area2 += out_y[i] * out_z[j] - out_y[j] * out_z[i]
+    return abs(area2) * 0.5
+
+
+def _clip_area_and_centroid_fast(poly, z_max):
+    """Compute area, centroid_y, centroid_z of polygon clipped below z_max.
+
+    Same as _clip_area_fast but also returns the centroid.
+    """
+    n = len(poly)
+    if n < 3:
+        return 0.0, 0.0, 0.0
+
+    out_y = []
+    out_z = []
+    py, pz = poly[:, 0], poly[:, 1]
+    for i in range(n):
+        cy, cz = py[i], pz[i]
+        ny, nz = py[(i + 1) % n], pz[(i + 1) % n]
+        c_in = cz <= z_max
+        n_in = nz <= z_max
+        if c_in:
+            if n_in:
+                out_y.append(ny); out_z.append(nz)
+            else:
+                dz = nz - cz
+                t = (z_max - cz) / dz if abs(dz) > 1e-15 else 0.5
+                t = max(0.0, min(1.0, t))
+                out_y.append(cy + t * (ny - cy))
+                out_z.append(cz + t * (nz - cz))
+        elif n_in:
+            dz = nz - cz
+            t = (z_max - cz) / dz if abs(dz) > 1e-15 else 0.5
+            t = max(0.0, min(1.0, t))
+            out_y.append(cy + t * (ny - cy))
+            out_z.append(cz + t * (nz - cz))
+            out_y.append(ny); out_z.append(nz)
+
+    m = len(out_y)
+    if m < 3:
+        return 0.0, 0.0, 0.0
+
+    area2 = 0.0
+    sy = 0.0
+    sz = 0.0
+    for i in range(m):
+        j = (i + 1) % m
+        cross = out_y[i] * out_z[j] - out_y[j] * out_z[i]
+        area2 += cross
+        sy += (out_y[i] + out_y[j]) * cross
+        sz += (out_z[i] + out_z[j]) * cross
+    area = area2 / 2.0
+    if abs(area) < 1e-20:
+        return 0.0, 0.0, 0.0
+    return abs(area), sy / (6.0 * area), sz / (6.0 * area)
+
+
 def _total_submerged_volume(rot_polys, dx, waterline):
     """Sum of clipped cross-section areas * dx."""
     vol = 0.0
     for rp in rot_polys:
         if len(rp) == 0:
             continue
-        clipped = _clip_polygon_below_z(rp, waterline)
-        if clipped is not None:
-            a, _, _ = _polygon_area_and_centroid(clipped)
-            vol += a * dx
-    return vol
+        vol += _clip_area_fast(rp, waterline)
+    return vol * dx
 
 
 def _total_cob(rot_polys, dx, waterline):
@@ -363,12 +462,10 @@ def _total_cob(rot_polys, dx, waterline):
     for rp in rot_polys:
         if len(rp) == 0:
             continue
-        clipped = _clip_polygon_below_z(rp, waterline)
-        if clipped is not None:
-            a, cy, cz = _polygon_area_and_centroid(clipped)
-            sum_a += a
-            sum_aY += a * cy
-            sum_aZ += a * cz
+        a, cy, cz = _clip_area_and_centroid_fast(rp, waterline)
+        sum_a += a
+        sum_aY += a * cy
+        sum_aZ += a * cz
 
     if sum_a < 1e-20:
         return np.array([0.0, 0.0])
