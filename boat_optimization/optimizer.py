@@ -9,6 +9,7 @@ the boat floats upright with positive freeboard.
 """
 
 import numpy as np
+from dataclasses import dataclass
 from scipy.optimize import differential_evolution
 from .hull import HullParams, is_within_foam_block, hull_mass
 from .analysis import (
@@ -16,6 +17,18 @@ from .analysis import (
     find_waterline_upright, center_of_mass_body,
 )
 from . import config
+
+
+@dataclass
+class OptimizationOutcome:
+    """Result of one optimization run."""
+
+    params: HullParams
+    objective_value: float
+    iterations: int
+    evaluations: int
+    success: bool
+    message: str
 
 
 # ===================================================================
@@ -117,7 +130,7 @@ def objective(x: np.ndarray) -> float:
 # ===================================================================
 
 def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
-             verbose: bool = True) -> HullParams:
+             verbose: bool = True) -> OptimizationOutcome:
     """Run differential evolution to find optimal hull parameters."""
     result = differential_evolution(
         objective,
@@ -131,6 +144,14 @@ def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
     )
 
     best = vector_to_params(result.x)
+    outcome = OptimizationOutcome(
+        params=best,
+        objective_value=float(result.fun),
+        iterations=int(result.nit),
+        evaluations=int(result.nfev),
+        success=bool(result.success),
+        message=str(result.message),
+    )
 
     if verbose:
         print(f"\nOptimisation finished — cost = {result.fun:.4f}")
@@ -141,5 +162,7 @@ def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
         print(f"  Taper p:  {best.taper_exp:.3f}")
         print(f"  Ballast:  {best.ballast_mass * 1000:.0f} g  "
               f"at z = {best.ballast_z * 100:.2f} cm")
+        print(f"  Iterations: {outcome.iterations}")
+        print(f"  Evaluations: {outcome.evaluations}")
 
-    return best
+    return outcome

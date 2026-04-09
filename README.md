@@ -24,11 +24,17 @@ boat_optimization/
 ```bash
 pip install -r requirements.txt
 
-python main.py analyze       # Full analysis + stability plots + AVS panels
-python main.py optimize      # Run optimizer, then analyse + export Mathematica
-python main.py export        # Export hull as STL for CNC
-python main.py mathematica   # Generate Mathematica .nb with equations
+python main.py analyze       # Analyse the current active design
+python main.py optimize      # Run optimizer, save a new version, update active design
+python main.py export        # Export the current active design as STL for CNC
+python main.py mathematica   # Generate Mathematica .nb for the current active design
 ```
+
+## Saved Designs
+- `designs/history/` stores every optimized hull in its own timestamped JSON file.
+- `designs/active.json` is the hull used by `analyze`, `export`, and `mathematica`.
+- `designs/best.json` tracks the lowest-cost optimization result seen so far.
+- History files are never deleted when a new absolute best is found.
 
 ## Physics
 The stability analysis uses proper large-angle computation:

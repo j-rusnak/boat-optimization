@@ -22,6 +22,11 @@ from boat_optimization.visualization import (
     plot_summary, plot_avs_panels, export_stl, plot_3d_hull,
 )
 from boat_optimization.mathematica_export import export_mathematica
+from boat_optimization.design_store import (
+    load_active_design,
+    build_design_record,
+    save_design_record,
+)
 from boat_optimization import config
 
 
@@ -98,10 +103,29 @@ def cmd_analyze(params: HullParams) -> None:
 
 def cmd_optimize() -> None:
     print("Starting optimisation …\n")
-    best = optimize()
+    outcome = optimize()
+    best = outcome.params
     print()
     stability = compute_stability_curve(best)
     print_design_summary(best, stability)
+
+    record = build_design_record(
+        best,
+        source="optimize",
+        objective_value=outcome.objective_value,
+        stability=stability,
+        notes=(
+            f"iterations={outcome.iterations}, evaluations={outcome.evaluations}, "
+            f"success={outcome.success}, message={outcome.message}"
+        ),
+    )
+    saved = save_design_record(record)
+    print(f"Saved versioned design: {saved['history_file']}")
+    print(f"Updated active design:  {saved['active_file']}")
+    if saved["best_updated"]:
+        print(f"Updated absolute best: {saved['best_file']}")
+    else:
+        print(f"Absolute best unchanged: {saved['best_file']}")
 
     fig1 = plot_summary(best, stability)
     fig1.savefig("optimized_summary.png", dpi=150, bbox_inches="tight")
@@ -135,15 +159,16 @@ def main():
         sys.exit(0)
 
     command = sys.argv[1].lower()
+    active_params = load_active_design(HullParams())
 
     if command == "analyze":
-        cmd_analyze(HullParams())
+        cmd_analyze(active_params)
     elif command == "optimize":
         cmd_optimize()
     elif command == "export":
-        cmd_export(HullParams())
+        cmd_export(active_params)
     elif command == "mathematica":
-        cmd_mathematica(HullParams())
+        cmd_mathematica(active_params)
     else:
         print(f"Unknown command: {command}")
         print(__doc__)

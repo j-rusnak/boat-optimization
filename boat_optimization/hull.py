@@ -108,7 +108,7 @@ def hull_volume(params: HullParams, n_x: int = 300) -> float:
     x = np.linspace(-params.length / 2, params.length / 2, n_x)
     beams = beam_at_x(x, params)
     areas = np.array([cross_section_area(b, params) for b in beams])
-    return float(np.trapz(areas, x))
+    return float(np.trapezoid(areas, x))
 
 
 def hull_mass(params: HullParams) -> float:

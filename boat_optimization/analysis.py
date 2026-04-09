@@ -110,7 +110,7 @@ def find_waterline_upright(params: HullParams, n_x: int = 200) -> float:
                 ratio = h / params.depth
                 y_max = (b / 2.0) * ratio ** (1.0 / params.flare_exp)
                 areas[i] = 2.0 * y_max * h * params.flare_exp / (params.flare_exp + 1.0)
-        return float(np.trapz(areas, x))
+            return float(np.trapezoid(areas, x))
 
     z_lo, z_hi = 0.0, params.depth
     for _ in range(60):
