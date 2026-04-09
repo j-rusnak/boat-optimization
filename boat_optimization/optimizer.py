@@ -1,134 +1,145 @@
 """
 Optimization driver for the boat hull design.
 
-Uses scipy.optimize to search over hull shape parameters while enforcing
-all design constraints (foam block size, ballast range, AVS > 100°, etc.).
+Uses scipy.optimize.differential_evolution to search over hull shape
+parameters while enforcing all design constraints.
+
+Objective: maximise AVS and slenderness (for drag), while ensuring
+the boat floats upright with positive freeboard.
 """
 
 import numpy as np
-from scipy.optimize import minimize, differential_evolution
+from scipy.optimize import differential_evolution
 from .hull import HullParams, is_within_foam_block, hull_mass
-from .analysis import compute_stability_curve, total_mass, find_waterline, center_of_mass
+from .analysis import (
+    compute_stability_curve, total_mass,
+    find_waterline_upright, center_of_mass_body,
+)
 from . import config
 
 
+# ===================================================================
+# Parameter vector <-> HullParams
+# ===================================================================
+
+PARAM_NAMES = [
+    "length", "beam", "depth", "flare_exp", "taper_exp",
+    "ballast_mass", "ballast_z",
+]
+
+
 def params_to_vector(p: HullParams) -> np.ndarray:
-    """Pack tunable hull parameters into a flat array for the optimizer."""
     return np.array([
-        p.length,
-        p.beam,
-        p.depth,
-        p.flare_exp,
-        p.taper_exp,
-        p.ballast_mass,
-        p.ballast_z,
+        p.length, p.beam, p.depth, p.flare_exp, p.taper_exp,
+        p.ballast_mass, p.ballast_z,
     ])
 
 
 def vector_to_params(x: np.ndarray) -> HullParams:
-    """Unpack optimizer vector back into HullParams."""
     return HullParams(
-        length=x[0],
-        beam=x[1],
-        depth=x[2],
-        flare_exp=x[3],
-        taper_exp=x[4],
-        ballast_mass=x[5],
-        ballast_z=x[6],
+        length=x[0], beam=x[1], depth=x[2],
+        flare_exp=x[3], taper_exp=x[4],
+        ballast_mass=x[5], ballast_z=x[6],
     )
 
 
-# Parameter bounds: (min, max) for each element in the vector
+# Parameter bounds
 BOUNDS = [
-    (0.10, config.MAX_LENGTH_M),       # length
-    (0.05, config.MAX_WIDTH_M),        # beam
-    (0.03, config.MAX_HEIGHT_M),       # depth
-    (1.0, 5.0),                        # flare_exp
-    (1.0, 5.0),                        # taper_exp
+    (0.15, config.MAX_LENGTH_M),                                # length
+    (0.06, config.MAX_WIDTH_M),                                 # beam
+    (0.04, config.MAX_HEIGHT_M),                                # depth
+    (1.2, 5.0),                                                 # flare_exp
+    (1.2, 5.0),                                                 # taper_exp
     (config.BALLAST_MASS_MIN_KG, config.BALLAST_MASS_MAX_KG),  # ballast_mass
-    (0.005, 0.05),                     # ballast_z
+    (0.005, 0.04),                                              # ballast_z
 ]
 
 
+# ===================================================================
+# Objective
+# ===================================================================
+
 def objective(x: np.ndarray) -> float:
-    """
-    Objective function to minimize. Lower is better.
+    """Cost function (lower = better).
 
-    Goals (weighted):
-    - Maximize AVS (penalize if below 100°)
-    - Minimize drag (reward slender hulls)
-    - Ensure the boat floats upright
-
-    Returns a scalar cost.
+    Terms:
+        1. Hard penalty if hull exceeds foam block.
+        2. Hard penalty if boat cannot float (waterline >= depth).
+        3. Large penalty if AVS < 100 deg.
+        4. Reward higher AVS (most important).
+        5. Reward slenderness (length / beam) for lower drag.
+        6. Reward low COM (more stability margin).
     """
     params = vector_to_params(x)
 
-    # Hard constraint: must fit in foam block
     if not is_within_foam_block(params):
         return 1e6
 
-    # Compute stability
-    stability = compute_stability_curve(params, np.arange(0, 181, 10, dtype=float))
+    # Quick float check
+    wl = find_waterline_upright(params, n_x=80)
+    if wl >= params.depth - 1e-4:
+        return 5e5
 
-    # Penalty: AVS below requirement
-    avs_penalty = max(0, config.MIN_AVS_DEG - stability.avs_deg) ** 2 * 100.0
-
-    # Reward: higher AVS is better
-    avs_reward = -stability.avs_deg
-
-    # Reward: slenderness ratio for lower drag (length / beam)
-    slenderness_reward = -params.length / max(params.beam, 0.01)
-
-    # Penalty: boat doesn't float (waterline above hull depth)
-    waterline = find_waterline(params)
-    if waterline >= params.depth:
-        float_penalty = 1e5
-    else:
-        float_penalty = 0.0
-
-    # Penalty: center of mass above waterline (less stable)
-    com = center_of_mass(params)
-    com_penalty = max(0, com[2] - waterline) * 500.0
-
-    cost = (
-        avs_penalty
-        + avs_reward * 2.0
-        + slenderness_reward * 10.0
-        + float_penalty
-        + com_penalty
+    # Stability (use coarser grid for speed during optimisation)
+    stab = compute_stability_curve(
+        params,
+        heel_angles_deg=np.arange(0, 181, 10, dtype=float),
+        n_x=25, n_poly=40,
     )
-    return cost
+
+    # AVS penalty / reward
+    avs = stab.avs_deg
+    if avs < config.MIN_AVS_DEG:
+        avs_cost = (config.MIN_AVS_DEG - avs) ** 2 * 50.0
+    else:
+        avs_cost = 0.0
+    avs_reward = -avs * 3.0  # maximise AVS
+
+    # Slenderness reward (length-to-beam ratio → lower drag)
+    slenderness = -params.length / max(params.beam, 0.01) * 5.0
+
+    # Low COM reward
+    com = center_of_mass_body(params)
+    com_reward = com[1] * 200.0  # penalise high COM
+
+    # Freeboard check
+    freeboard = params.depth - wl
+    if freeboard < 0.005:
+        freeboard_penalty = 1e4
+    else:
+        freeboard_penalty = 0.0
+
+    return avs_cost + avs_reward + slenderness + com_reward + freeboard_penalty
 
 
-def optimize(seed: int = 42, maxiter: int = 50, popsize: int = 15) -> HullParams:
-    """
-    Run differential evolution to find optimal hull parameters.
+# ===================================================================
+# Runner
+# ===================================================================
 
-    Args:
-        seed: random seed for reproducibility
-        maxiter: maximum optimizer iterations
-        popsize: population size multiplier
-
-    Returns:
-        Optimized HullParams
-    """
+def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
+             verbose: bool = True) -> HullParams:
+    """Run differential evolution to find optimal hull parameters."""
     result = differential_evolution(
         objective,
         bounds=BOUNDS,
         seed=seed,
         maxiter=maxiter,
         popsize=popsize,
-        tol=1e-4,
-        disp=True,
+        tol=1e-5,
+        disp=verbose,
+        workers=1,
     )
 
-    best_params = vector_to_params(result.x)
-    print(f"\nOptimization finished: cost = {result.fun:.4f}")
-    print(f"  Length: {best_params.length * 100:.1f} cm")
-    print(f"  Beam:   {best_params.beam * 100:.1f} cm")
-    print(f"  Depth:  {best_params.depth * 100:.1f} cm")
-    print(f"  Flare:  {best_params.flare_exp:.2f}")
-    print(f"  Taper:  {best_params.taper_exp:.2f}")
-    print(f"  Ballast: {best_params.ballast_mass * 1000:.0f} g at z={best_params.ballast_z * 100:.1f} cm")
+    best = vector_to_params(result.x)
 
-    return best_params
+    if verbose:
+        print(f"\nOptimisation finished — cost = {result.fun:.4f}")
+        print(f"  Length:   {best.length * 100:.2f} cm")
+        print(f"  Beam:     {best.beam * 100:.2f} cm")
+        print(f"  Depth:    {best.depth * 100:.2f} cm")
+        print(f"  Flare n:  {best.flare_exp:.3f}")
+        print(f"  Taper p:  {best.taper_exp:.3f}")
+        print(f"  Ballast:  {best.ballast_mass * 1000:.0f} g  "
+              f"at z = {best.ballast_z * 100:.2f} cm")
+
+    return best
