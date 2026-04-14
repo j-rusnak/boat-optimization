@@ -4,7 +4,7 @@ Optimization driver for the boat hull design.
 Uses scipy.optimize.differential_evolution to search over hull shape
 parameters while enforcing all design constraints.
 
-Objective: maximise AVS and slenderness (for drag), while ensuring
+Objective: maximise AVS (stability), while ensuring
 the boat floats upright with positive freeboard.
 """
 
@@ -61,8 +61,8 @@ BOUNDS = [
     (0.15, config.MAX_LENGTH_M),                                # length
     (0.06, config.MAX_WIDTH_M),                                 # beam
     (0.04, config.MAX_HEIGHT_M),                                # depth
-    (1.2, 5.0),                                                 # flare_exp
-    (1.2, 5.0),                                                 # taper_exp
+    (2.0, 5.0),                                                 # flare_exp
+    (1.2, 2.5),                                                 # taper_exp
     (config.BALLAST_MASS_MIN_KG, config.BALLAST_MASS_MAX_KG),  # ballast_mass
     (0.005, 0.04),                                              # ballast_z
 ]
@@ -79,9 +79,9 @@ def objective(x: np.ndarray) -> float:
         1. Hard penalty if hull exceeds foam block.
         2. Hard penalty if boat cannot float (waterline >= depth).
         3. Large penalty if AVS < 100 deg.
-        4. Reward higher AVS (most important).
-        5. Reward slenderness (length / beam) for lower drag.
-        6. Reward low COM (more stability margin).
+        4. Reward higher AVS.
+        5. Reward stronger peak righting moment.
+        6. Reward larger integrated righting moment (area under curve).
     """
     params = vector_to_params(x)
 
@@ -94,10 +94,11 @@ def objective(x: np.ndarray) -> float:
         return 5e5
 
     # Stability (use coarser grid for speed during optimisation)
+    angles = np.arange(0, 181, 10, dtype=float)
     stab = compute_stability_curve(
         params,
-        heel_angles_deg=np.arange(0, 181, 15, dtype=float),
-        n_x=15, n_poly=25,
+        heel_angles_deg=angles,
+        n_x=20, n_poly=30,
     )
 
     # AVS penalty / reward
@@ -106,14 +107,12 @@ def objective(x: np.ndarray) -> float:
         avs_cost = (config.MIN_AVS_DEG - avs) ** 2 * 50.0
     else:
         avs_cost = 0.0
-    avs_reward = -avs * 3.0  # maximise AVS
+    avs_reward = -avs * 2.0  # maximise AVS
 
-    # Slenderness reward (length-to-beam ratio → lower drag)
-    slenderness = -params.length / max(params.beam, 0.01) * 5.0
-
-    # Low COM reward
-    com = center_of_mass_body(params)
-    com_reward = com[1] * 200.0  # penalise high COM
+    # Reward strong righting moments (primary stability measure)
+    peak_moment_reward = -stab.righting_moments.max() * 500.0
+    moment_integral = float(np.trapezoid(stab.righting_moments, angles))
+    integral_reward = -moment_integral * 10.0
 
     # Freeboard check
     freeboard = params.depth - wl
@@ -122,7 +121,7 @@ def objective(x: np.ndarray) -> float:
     else:
         freeboard_penalty = 0.0
 
-    return avs_cost + avs_reward + slenderness + com_reward + freeboard_penalty
+    return avs_cost + avs_reward + peak_moment_reward + integral_reward + freeboard_penalty
 
 
 # ===================================================================
@@ -131,10 +130,16 @@ def objective(x: np.ndarray) -> float:
 
 def optimize(seed: int = 42, maxiter: int = 60, popsize: int = 20,
              verbose: bool = True) -> OptimizationOutcome:
-    """Run differential evolution to find optimal hull parameters."""
+    """Run differential evolution to find optimal hull parameters.
+
+    Always seeds the initial population with the default parabolic hull
+    (HullParams defaults) so the search starts from a known-good shape.
+    """
+    default_x0 = params_to_vector(HullParams())
     result = differential_evolution(
         objective,
         bounds=BOUNDS,
+        x0=default_x0,
         seed=seed,
         maxiter=maxiter,
         popsize=popsize,

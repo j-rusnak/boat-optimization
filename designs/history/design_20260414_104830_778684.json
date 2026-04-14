@@ -1,0 +1,26 @@
+{
+  "version_id": "20260414_104830_778684",
+  "timestamp": "2026-04-14T10:48:30",
+  "source": "optimize",
+  "objective_value": -890.4681911183186,
+  "notes": "iterations=60, evaluations=8708, success=False, message=Maximum number of iterations has been exceeded.",
+  "params": {
+    "length": 0.2793619298753957,
+    "beam": 0.15131389766573147,
+    "depth": 0.07465690793790668,
+    "flare_exp": 4.7436407397284555,
+    "taper_exp": 1.2110155908350153,
+    "ballast_mass": 0.9780492917787643,
+    "ballast_z": 0.005142106234379131,
+    "ballast_x": 0.0,
+    "mast_x": 0.0
+  },
+  "metrics": {
+    "avs_deg": 180.0,
+    "meets_avs_requirement": true,
+    "peak_righting_moment_nm": 0.13987180486785708,
+    "center_of_mass_z_m": 0.029493810545882,
+    "upright_waterline_z_m": 0.06940368559280541,
+    "freeboard_m": 0.005253222345101269
+  }
+}
